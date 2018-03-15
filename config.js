@@ -28,6 +28,9 @@ module.exports = {
     autoscaling: {
       // text in the sns message or topicname to match on to process this service type
       match_text: "AutoScaling"
+    },
+    logs: {
+      match_text: "CloudWatch Logs Event"
     }
   }
 

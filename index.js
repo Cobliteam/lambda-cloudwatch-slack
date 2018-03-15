@@ -17,6 +17,14 @@ var baseSlackMessage = {
   ]
 }
 
+var renderKey = function(message, key) {
+  if (typeof message[key] === 'object') {
+    return JSON.stringify(message[key]);
+  } else {
+    return message[key];
+  }
+}
+
 var postMessage = function(message, callback) {
   var body = JSON.stringify(message);
   var options = url.parse(hookUrl);
@@ -262,6 +270,56 @@ var handleAutoScaling = function(event, context) {
   return _.merge(slackMessage, baseSlackMessage);
 };
 
+var handleCloudWatchLogs = function(event, context) {
+  var subject = "AWS CloudWatch Logs Notification";
+  var message = JSON.parse(event.Records[0].Sns.Message);
+  var timestamp = (new Date(event.Records[0].Sns.Timestamp)).getTime() / 1000;
+
+  var fields = Object.assign({}, message);
+  var logGroup = fields.LogGroup;
+  var logStream = fields.LogStream;
+  var logMessages = fields.LogMessages;
+  var referenceTimestamp = fields.ReferenceTimestamp;
+  var referenceId = fields.referenceId;
+  var region = fields.Region;
+
+  delete fields.LogGroup;
+  delete fields.LogStream;
+  delete fields.LogMessages;
+  delete fields.ReferenceTimestamp;
+  delete fields.ReferenceId;
+  delete fields.Region;
+
+  var slackFields = [
+    { "title": "Log Group", "value": message.LogGroup, "short": false },
+    { "title": "Log Stream", "value": message.LogStream, "short": false },
+    { "title": "Region", "value": message.Region, "short": false }
+  ];
+
+  if (referenceTimestamp && referenceId) {
+    var consoleUrl = (
+      "https://console.aws.amazon.com/cloudwatch/home?region=" + region +
+      "#logEventViewer:group=" + encodeURIComponent(logGroup) +
+      ";refTime=" + encodeURIComponent(referenceTimestamp) +
+      ";refId=" + encodeURIComponent(referenceId));
+    slackFields.push({ "title": "Link To First Message", "value": consoleUrl, "short": false });
+  }
+
+  for (key in fields) {
+    slackFields.push({ "title": key, "value": renderKey(fields, key) });
+  }
+
+  var color = "warning";
+  var slackMessage = {
+    text: "*" + subject + "*",
+    attachments: [
+      {"color": color, "fields": slackFields, "ts": timestamp},
+      {"color": color, "pretext": "Log Messages", "text": logMessages}
+    ]
+  };
+  return _.merge(slackMessage, baseSlackMessage);
+};
+
 var handleCatchAll = function(event, context) {
 
     var record = event.Records[0]
@@ -280,9 +338,7 @@ var handleCatchAll = function(event, context) {
     var description = ""
     for(key in message) {
 
-        var renderedMessage = typeof message[key] === 'object'
-                            ? JSON.stringify(message[key])
-                            : message[key]
+        var renderedMessage = renderKey(message, key);
 
         description = description + "\n" + key + ": " + renderedMessage
     }
@@ -330,6 +386,10 @@ var processEvent = function(event, context) {
   else if(eventSubscriptionArn.indexOf(config.services.autoscaling.match_text) > -1 || eventSnsSubject.indexOf(config.services.autoscaling.match_text) > -1 || eventSnsMessage.indexOf(config.services.autoscaling.match_text) > -1){
     console.log("processing autoscaling notification");
     slackMessage = handleAutoScaling(event, context);
+  }
+  else if(eventSubscriptionArn.indexOf(config.services.logs.match_text) > -1 || eventSnsSubject.indexOf(config.services.logs.match_text) > -1 || eventSnsMessage.indexOf(config.services.logs.match_text) > -1){
+    console.log("processing logs notification");
+    slackMessage = handleCloudWatchLogs(event, context);
   }
   else{
     slackMessage = handleCatchAll(event, context);
